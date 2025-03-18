@@ -1,0 +1,16 @@
+# Core MCP dependencies
+mcp-python>=0.1.0
+fastmcp>=0.1.0
+
+# Server dependencies
+uvicorn>=0.15.0
+fastapi>=0.68.0
+
+# Utility dependencies
+python-json-logger>=2.0.0
+pydantic>=1.8.0
+typing-extensions>=4.0.0
+
+# Development dependencies
+black>=22.0.0  # for code formatting
+pytest>=7.0.0  # for testing
