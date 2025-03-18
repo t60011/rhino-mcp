@@ -78,12 +78,7 @@ def execute_rhino_code(ctx: Context, code: str) -> str:
 
 def main():
     """Run the MCP server"""
-    import uvicorn
-    host = "localhost"
-    port = 8080
-    
-    logger.info(f"Starting RhinoMCP server on {host}:{port}")
-    uvicorn.run(app, host=host, port=port)
+    app.run(transport='stdio')
 
 if __name__ == "__main__":
     main()

@@ -63,23 +63,29 @@ The MCP server will be started automatically by Claude Desktop using the configu
 
 ### Claude Integration
 
-Configure Claude Desktop by adding the following to your `claude_desktop_config.json`:
+To integrate with Claude Desktop:
+
+1. Go to Claude Desktop > Settings > Developer > Edit Config 
+2. Open the `claude_desktop_config.json` file and add the following configuration:
 
 ```json
 {
     "mcpServers": {
         "rhino": {
-            "command": "uvx",
-            "args": ["rhino-mcp"]
+            "command": "/Users/Joo/miniconda3/envs/rhino_mcp/bin/python",
+            "args": [
+                "-m", "rhino_mcp.server"
+            ]
         }
     }
 }
 ```
 
-Make sure you:
-1. Have activated the conda environment: `conda activate rhino_mcp`
-2. Are in the project directory where you installed the package
-3. Have installed the package in development mode: `uv pip install -e .`
+Make sure to:
+- Replace the Python path with the path to Python in your conda environment
+- Save the file and restart Claude Desktop
+
+> **Important Note:** If you're using a conda environment, you must specify the full path to the Python interpreter as shown above. Using the `uvx` command might not work properly with conda environments.
 
 ## Usage
 

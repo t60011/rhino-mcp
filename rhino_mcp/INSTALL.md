@@ -54,17 +54,31 @@ You should see log messages indicating that the server has started and is trying
 
 ### For Claude Desktop
 
-Edit your `claude_desktop_config.json` file to include:
+For integration with Claude Desktop, edit your `claude_desktop_config.json` file (located at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
     "mcpServers": {
         "rhino": {
-            "command": "rhino-mcp"
+            "command": "/path/to/your/conda/environment/bin/python",
+            "args": [
+                "-m", "rhino_mcp.server"
+            ]
         }
     }
 }
 ```
+
+**Important:** If you're using a conda environment (recommended), you need to:
+1. Replace `/path/to/your/conda/environment` with the actual path to your conda environment
+   - Example: `/Users/username/miniconda3/envs/rhino_mcp`
+2. Make sure your conda environment is properly set up with all dependencies
+3. Restart Claude Desktop after saving the configuration
+
+**Troubleshooting:**
+- If you get "No solution found when resolving tool dependencies" errors, make sure you're using the full Python path
+- The `uvx` command approach might not work reliably with conda environments
+- You can check your conda environment path with `conda info --envs`
 
 ### For Cursor
 
