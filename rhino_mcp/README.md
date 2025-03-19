@@ -46,9 +46,19 @@ The system consists of two main components:
 
 ### Installing the Rhino-side Script
 
-1. Open Rhino
-2. Run the Python script editor
-3. Open and run the `rhino_script.py` file
+1. Open Rhino 7
+2. Open the Python Editor:
+   - Click on the "Tools" menu
+   - Select "Python Editor" (or press Ctrl+Alt+P / Cmd+Alt+P)
+3. In the Python Editor:
+   - Click "File" > "Open"
+   - Navigate to and select `rhino_script.py`
+   - Click "Run" (or press F5)
+4. The script will start automatically and you should see these messages in the Python Editor:
+   ```
+   RhinoMCP script loaded. Server started automatically.
+   To stop the server, run: stop_server()
+   ```
 
 ### Running the MCP Server
 
@@ -56,10 +66,25 @@ The MCP server will be started automatically by Claude Desktop using the configu
 
 ### Starting the Connection
 
-1. Open Rhino
-2. Run the Python script editor
-3. Open and run the `rhino_script.py` file to start the Rhino socket server
-4. Open Claude Desktop - it will automatically start the MCP server when needed
+1. First, start the Rhino script:
+   - Open Rhino 7
+   - Open the Python Editor
+   - Open and run `rhino_script.py`
+   - Verify you see the startup messages in the Python Editor
+
+2. Then start Claude Desktop:
+   - It will automatically start the MCP server when needed
+   - The connection between Claude and Rhino will be established automatically
+
+### Managing the Connection
+
+- To stop the Rhino script server:
+  - In the Python Editor, type `stop_server()` and press Enter
+  - You should see "RhinoMCP server stopped" in the output
+
+- To restart the Rhino script server:
+  - In the Python Editor, type `start_server()` and press Enter
+  - You should see "RhinoMCP server started on localhost:9876" in the output
 
 ### Claude Integration
 
@@ -116,10 +141,27 @@ Here are some examples of what you can ask Claude to do:
 
 ## Troubleshooting
 
-- **Connection issues**: Make sure the Rhino script is running before starting the MCP server
-- **Package not found**: Ensure you're in the correct directory and have installed the package in development mode
-- **Python path issues**: Verify that the Python path in `claude_desktop_config.json` matches your conda environment's Python path
-- **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
+- **Connection issues**: 
+  - Make sure the Rhino script is running (check Python Editor output)
+  - Verify port 9876 is not in use by another application
+  - Check that both Rhino and Claude Desktop are running
+
+- **Script not starting**:
+  - Make sure you're using Rhino 7 or newer
+  - Check the Python Editor for any error messages
+  - Try closing and reopening the Python Editor
+
+- **Package not found**: 
+  - Ensure you're in the correct directory and have installed the package in development mode
+  - Verify your conda environment is activated
+
+- **Python path issues**: 
+  - Verify that the Python path in `claude_desktop_config.json` matches your conda environment's Python path
+  - Make sure you're using the full path to the Python interpreter
+
+- **Timeout errors**: 
+  - Try simplifying your requests or breaking them into smaller steps
+  - Check if the Rhino script is still running (try `start_server()` again)
 
 ## Limitations
 
