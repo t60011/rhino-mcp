@@ -10,14 +10,34 @@ import time
 import System
 import Rhino
 import scriptcontext as sc
+import rhinoscriptsyntax as rs
 import os
 import platform
 import traceback
 import sys
+import base64
+from System.Drawing import Bitmap
+from System.Drawing.Imaging import ImageFormat
+from System.IO import MemoryStream
+from datetime import datetime
 
 # Configuration
 HOST = 'localhost'
 PORT = 9876
+
+# Add constant for annotation layer
+ANNOTATION_LAYER = "MCP_Annotations"
+
+VALID_METADATA_FIELDS = {
+    'required': ['id', 'name', 'type', 'layer'],
+    'optional': [
+        'short_id',      # Short identifier (DDHHMMSS format)
+        'created_at',    # Timestamp of creation
+        'bbox',          # Bounding box coordinates
+        'description',   # Object description
+        'user_text'      # All user text key-value pairs
+    ]
+}
 
 def get_log_dir():
     """Get the appropriate log directory based on the platform"""
@@ -208,13 +228,23 @@ class RhinoMCPServer:
             params = command.get("params", {})
             
             if command_type == "get_scene_info":
-                return self._get_scene_info()
+                return self._get_scene_info(params)
             elif command_type == "create_cube":
                 return self._create_cube(params)
             elif command_type == "get_layers":
                 return self._get_layers()
             elif command_type == "execute_code":
                 return self._execute_code(params)
+            elif command_type == "get_objects_with_metadata":
+                return self._get_objects_with_metadata(params)
+            elif command_type == "capture_viewport":
+                return self._capture_viewport(params)
+            elif command_type == "add_metadata":
+                return self._add_object_metadata(
+                    params.get("object_id"), 
+                    params.get("name"), 
+                    params.get("description")
+                )
             else:
                 return {"status": "error", "message": "Unknown command type"}
                 
@@ -223,27 +253,74 @@ class RhinoMCPServer:
             traceback.print_exc()
             return {"status": "error", "message": str(e)}
     
-    def _get_scene_info(self):
+    def _get_scene_info(self, params=None):
         """Get information about the current scene"""
         try:
+            # Ensure params is a dictionary
+            if params is None:
+                params = {}
+                
             doc = sc.doc
+            if not doc:
+                return {
+                    "status": "error",
+                    "message": "No active document"
+                }
+            
+            print("getting scene info")
             objects = []
+            layer_count = doc.Layers.Count if doc.Layers else 0
+            total_objects = doc.Objects.Count
+            max_objects = 100  # Limit to 100 objects
             
+            # Get objects (limited to max_objects)
             for obj in doc.Objects:
-                objects.append({
-                    "id": str(obj.Id),
-                    "name": obj.Name,
-                    "type": obj.Geometry.GetType().Name,
-                    "layer": obj.Attributes.LayerIndex
-                })
+                if len(objects) >= max_objects:
+                    break
+                    
+                try:
+                    obj_info = {
+                        "id": str(obj.Id),
+                        "name": obj.Name or "Unnamed",
+                        "type": obj.Geometry.GetType().Name if obj.Geometry else "Unknown",
+                        "layer": obj.Attributes.LayerIndex,
+                        "layer_name": doc.Layers[obj.Attributes.LayerIndex].Name if obj.Attributes.LayerIndex < layer_count else "Unknown"
+                    }
+                    objects.append(obj_info)
+                except Exception as e:
+                    log_message("Error processing object: {0}".format(str(e)))
+                    continue
             
-            return {
+            response = {
                 "status": "success",
                 "objects": objects,
-                "layer_count": doc.Layers.Count
+                "object_count": len(objects),
+                "total_objects": total_objects,
+                "layer_count": layer_count,
+                "layers": [{"id": i, "name": doc.Layers[i].Name} for i in range(layer_count)],
+                "document_name": doc.Name or "Untitled",
+                "document_path": doc.Path or "Not saved"
             }
+            
+            # Add note if there are more objects
+            if total_objects > max_objects:
+                response["note"] = "Showing first {0} objects. Use get_objects_with_metadata() for filtering and getting more objects.".format(max_objects)
+            
+            return response
+            
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            log_message("Error getting scene info: {0}".format(str(e)))
+            return {
+                "status": "error",
+                "message": str(e),
+                "objects": [],
+                "object_count": 0,
+                "total_objects": 0,
+                "layer_count": 0,
+                "layers": [],
+                "document_name": "Unknown",
+                "document_path": "Unknown"
+            }
     
     def _create_cube(self, params):
         """Create a cube in the scene"""
@@ -316,14 +393,289 @@ class RhinoMCPServer:
             
             # Create a new scope for code execution
             local_dict = {}
-            exec(code, globals(), local_dict)
+            
+            try:
+                # Execute the code
+                exec(code, globals(), local_dict)
+                
+                return {
+                    "status": "success",
+                    "result": str(local_dict.get("result", "Code executed successfully")),
+                    "variables": {k: str(v) for k, v in local_dict.items() if not k.startswith('__')}
+                }
+                
+            except SyntaxError as e:
+                return {
+                    "status": "error",
+                    "type": "syntax_error",
+                    "message": "Syntax error in code",
+                    "details": str(e),
+                    "line": e.lineno,
+                    "text": e.text
+                }
+                
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "type": "runtime_error",
+                    "message": "Error during code execution",
+                    "details": str(e),
+                    "traceback": traceback.format_exc()
+                }
+                
+        except Exception as e:
+            return {
+                "status": "error",
+                "type": "system_error",
+                "message": "Error in code execution system",
+                "details": str(e)
+            }
+
+    def _add_object_metadata(self, obj_id, name=None, description=None):
+        """Add standardized metadata to an object"""
+        try:
+            import json
+            import time
+            from datetime import datetime
+            
+            # Generate short ID
+            short_id = datetime.now().strftime("%d%H%M%S")
+            
+            # Get bounding box
+            bbox = rs.BoundingBox(obj_id)
+            bbox_data = [[p.X, p.Y, p.Z] for p in bbox] if bbox else []
+            
+            # Get object type
+            obj = sc.doc.Objects.Find(obj_id)
+            obj_type = obj.Geometry.GetType().Name if obj else "Unknown"
+            
+            # Standard metadata
+            metadata = {
+                "short_id": short_id,
+                "created_at": time.time(),
+                "layer": rs.ObjectLayer(obj_id),
+                "type": obj_type,
+                "bbox": bbox_data
+            }
+            
+            # User-provided metadata
+            if name:
+                rs.ObjectName(obj_id, name)
+                metadata["name"] = name
+            else:
+                # Auto-generate name if none provided
+                auto_name = "{0}_{1}".format(obj_type, short_id)
+                rs.ObjectName(obj_id, auto_name)
+                metadata["name"] = auto_name
+                
+            if description:
+                metadata["description"] = description
+                
+            # Store metadata as user text (convert bbox to string for storage)
+            user_text_data = metadata.copy()
+            user_text_data["bbox"] = json.dumps(bbox_data)
+            
+            # Add all metadata as user text
+            for key, value in user_text_data.items():
+                rs.SetUserText(obj_id, key, str(value))
+                
+            return {"status": "success"}
+        except Exception as e:
+            log_message("Error adding metadata: " + str(e))
+            return {"status": "error", "message": str(e)}
+
+    def _get_objects_with_metadata(self, params):
+        """Get objects with their metadata, with optional filtering"""
+        try:
+            import re
+            import json
+            
+            filters = params.get("filters", {})
+            metadata_fields = params.get("metadata_fields")
+            layer_filter = filters.get("layer")
+            name_filter = filters.get("name")
+            id_filter = filters.get("short_id")
+            
+            # Validate metadata fields
+            all_fields = VALID_METADATA_FIELDS['required'] + VALID_METADATA_FIELDS['optional']
+            if metadata_fields:
+                invalid_fields = [f for f in metadata_fields if f not in all_fields]
+                if invalid_fields:
+                    return {
+                        "status": "error",
+                        "message": "Invalid metadata fields: " + ", ".join(invalid_fields),
+                        "available_fields": all_fields
+                    }
+            
+            objects = []
+            
+            for obj in sc.doc.Objects:
+                obj_id = obj.Id
+                
+                # Apply filters
+                if layer_filter:
+                    layer = rs.ObjectLayer(obj_id)
+                    pattern = "^" + layer_filter.replace("*", ".*") + "$"
+                    if not re.match(pattern, layer, re.IGNORECASE):
+                        continue
+                    
+                if name_filter:
+                    name = obj.Name or ""
+                    pattern = "^" + name_filter.replace("*", ".*") + "$"
+                    if not re.match(pattern, name, re.IGNORECASE):
+                        continue
+                    
+                if id_filter:
+                    short_id = rs.GetUserText(obj_id, "short_id") or ""
+                    if short_id != id_filter:
+                        continue
+                    
+                # Build base object data with required fields
+                obj_data = {
+                    "id": str(obj_id),
+                    "name": obj.Name or "Unnamed",
+                    "type": obj.Geometry.GetType().Name,
+                    "layer": rs.ObjectLayer(obj_id)
+                }
+                
+                # Get user text data and parse stored values
+                stored_data = {}
+                for key in rs.GetUserText(obj_id):
+                    value = rs.GetUserText(obj_id, key)
+                    if key == "bbox":
+                        try:
+                            value = json.loads(value)
+                        except:
+                            value = []
+                    elif key == "created_at":
+                        try:
+                            value = float(value)
+                        except:
+                            value = 0
+                    stored_data[key] = value
+                
+                # Build metadata based on requested fields
+                if metadata_fields:
+                    metadata = {k: stored_data[k] for k in metadata_fields if k in stored_data}
+                else:
+                    metadata = {k: v for k, v in stored_data.items() 
+                              if k not in VALID_METADATA_FIELDS['required']}
+                
+                # Only include user_text if specifically requested
+                if not metadata_fields or 'user_text' in metadata_fields:
+                    user_text = {k: v for k, v in stored_data.items() 
+                               if k not in metadata}
+                    if user_text:
+                        obj_data["user_text"] = user_text
+                
+                # Add metadata if we have any
+                if metadata:
+                    obj_data["metadata"] = metadata
+                    
+                objects.append(obj_data)
             
             return {
                 "status": "success",
-                "result": str(local_dict.get("result", "Code executed successfully"))
+                "count": len(objects),
+                "objects": objects,
+                "available_fields": all_fields
             }
+            
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            log_message("Error filtering objects: " + str(e))
+            return {
+                "status": "error",
+                "message": str(e),
+                "available_fields": all_fields
+            }
+
+    def _capture_viewport(self, params):
+        """Capture viewport with optional annotations and layer filtering"""
+        try:
+            layer_name = params.get("layer")
+            show_annotations = params.get("show_annotations", True)
+            max_size = params.get("max_size", 800)  # Default max dimension
+            original_layer = rs.CurrentLayer()
+            temp_dots = []
+
+            if show_annotations:
+                # Ensure annotation layer exists and is current
+                if not rs.IsLayer(ANNOTATION_LAYER):
+                    rs.AddLayer(ANNOTATION_LAYER, color=(255, 0, 0))
+                rs.CurrentLayer(ANNOTATION_LAYER)
+                
+                # Create temporary text dots for each object
+                for obj in sc.doc.Objects:
+                    if layer_name and rs.ObjectLayer(obj.Id) != layer_name:
+                        continue
+                        
+                    bbox = rs.BoundingBox(obj.Id)
+                    if bbox:
+                        pt = bbox[1]  # Use top corner of bounding box
+                        short_id = rs.GetUserText(obj.Id, "short_id")
+                        if not short_id:
+                            short_id = datetime.now().strftime("%d%H%M%S")
+                            rs.SetUserText(obj.Id, "short_id", short_id)
+                        
+                        name = rs.ObjectName(obj.Id) or "Unnamed"
+                        text = "{0}\n{1}".format(name, short_id)
+                        
+                        dot_id = rs.AddTextDot(text, pt)
+                        rs.TextDotHeight(dot_id, 8)
+                        temp_dots.append(dot_id)
+            
+            try:
+                view = sc.doc.Views.ActiveView
+                memory_stream = MemoryStream()
+                
+                # Capture to bitmap
+                bitmap = view.CaptureToBitmap()
+                
+                # Calculate new dimensions while maintaining aspect ratio
+                width, height = bitmap.Width, bitmap.Height
+                if width > height:
+                    new_width = max_size
+                    new_height = int(height * (max_size / width))
+                else:
+                    new_height = max_size
+                    new_width = int(width * (max_size / height))
+                
+                # Create resized bitmap
+                resized_bitmap = Bitmap(bitmap, new_width, new_height)
+                
+                # Save as JPEG (IronPython doesn't support quality parameter)
+                resized_bitmap.Save(memory_stream, ImageFormat.Jpeg)
+                
+                bytes_array = memory_stream.ToArray()
+                image_data = base64.b64encode(bytes(bytearray(bytes_array))).decode('utf-8')
+                
+                # Clean up
+                bitmap.Dispose()
+                resized_bitmap.Dispose()
+                memory_stream.Dispose()
+                
+            finally:
+                if temp_dots:
+                    rs.DeleteObjects(temp_dots)
+                rs.CurrentLayer(original_layer)
+            
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": image_data
+                }
+            }
+            
+        except Exception as e:
+            log_message("Error capturing viewport: " + str(e))
+            if 'original_layer' in locals():
+                rs.CurrentLayer(original_layer)
+            return {
+                "type": "text",
+                "text": "Error capturing viewport: " + str(e)
+            }
 
 # Create and start server
 server = RhinoMCPServer(HOST, PORT)
