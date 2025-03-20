@@ -155,9 +155,13 @@ class RhinoMCPServer:
     def _handle_client(self, client):
         """Handle a client connection"""
         try:
+            # Set socket buffer size
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 14485760)  # 10MB
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 14485760)  # 10MB
+            
             while self.running:
-                # Receive command
-                data = client.recv(8192)
+                # Receive command with larger buffer
+                data = client.recv(14485760)  # 10MB buffer
                 if not data:
                     log_message("Client disconnected")
                     break
@@ -171,7 +175,12 @@ class RhinoMCPServer:
                         try:
                             response = self.execute_command(command)
                             response_json = json.dumps(response)
-                            client.sendall(response_json.encode('utf-8'))
+                            # Split large responses into chunks if needed
+                            chunk_size = 14485760  # 10MB chunks
+                            response_bytes = response_json.encode('utf-8')
+                            for i in range(0, len(response_bytes), chunk_size):
+                                chunk = response_bytes[i:i + chunk_size]
+                                client.sendall(chunk)
                             log_message("Response sent successfully")
                         except Exception as e:
                             log_message("Error executing command: {0}".format(str(e)))
@@ -254,12 +263,8 @@ class RhinoMCPServer:
             return {"status": "error", "message": str(e)}
     
     def _get_scene_info(self, params=None):
-        """Get information about the current scene"""
+        """Get simplified scene information focusing on layers and example objects"""
         try:
-            # Ensure params is a dictionary
-            if params is None:
-                params = {}
-                
             doc = sc.doc
             if not doc:
                 return {
@@ -267,59 +272,55 @@ class RhinoMCPServer:
                     "message": "No active document"
                 }
             
-            print("getting scene info")
-            objects = []
-            layer_count = doc.Layers.Count if doc.Layers else 0
-            total_objects = doc.Objects.Count
-            max_objects = 100  # Limit to 100 objects
+            log_message("Getting simplified scene info...")
+            layers_info = []
             
-            # Get objects (limited to max_objects)
-            for obj in doc.Objects:
-                if len(objects) >= max_objects:
-                    break
-                    
-                try:
-                    obj_info = {
-                        "id": str(obj.Id),
-                        "name": obj.Name or "Unnamed",
-                        "type": obj.Geometry.GetType().Name if obj.Geometry else "Unknown",
-                        "layer": obj.Attributes.LayerIndex,
-                        "layer_name": doc.Layers[obj.Attributes.LayerIndex].Name if obj.Attributes.LayerIndex < layer_count else "Unknown"
-                    }
-                    objects.append(obj_info)
-                except Exception as e:
-                    log_message("Error processing object: {0}".format(str(e)))
-                    continue
+            for layer in doc.Layers:
+                layer_objects = [obj for obj in doc.Objects if obj.Attributes.LayerIndex == layer.Index]
+                example_objects = []
+                
+                for obj in layer_objects[:5]:  # Limit to 5 example objects per layer
+                    try:
+                        # Convert NameValueCollection to dictionary
+                        user_strings = {}
+                        if obj.Attributes.GetUserStrings():
+                            for key in obj.Attributes.GetUserStrings():
+                                user_strings[key] = obj.Attributes.GetUserString(key)
+                        
+                        obj_info = {
+                            "id": str(obj.Id),
+                            "name": obj.Name or "Unnamed",
+                            "type": obj.Geometry.GetType().Name if obj.Geometry else "Unknown",
+                            "metadata": user_strings  # Now using the converted dictionary
+                        }
+                        example_objects.append(obj_info)
+                    except Exception as e:
+                        log_message("Error processing object: {0}".format(str(e)))
+                        continue
+                
+                layer_info = {
+                    "full_path": layer.FullPath,
+                    "object_count": len(layer_objects),
+                    "is_visible": layer.IsVisible,
+                    "is_locked": layer.IsLocked,
+                    "example_objects": example_objects
+                }
+                layers_info.append(layer_info)
             
             response = {
                 "status": "success",
-                "objects": objects,
-                "object_count": len(objects),
-                "total_objects": total_objects,
-                "layer_count": layer_count,
-                "layers": [{"id": i, "name": doc.Layers[i].Name} for i in range(layer_count)],
-                "document_name": doc.Name or "Untitled",
-                "document_path": doc.Path or "Not saved"
+                "layers": layers_info
             }
             
-            # Add note if there are more objects
-            if total_objects > max_objects:
-                response["note"] = "Showing first {0} objects. Use get_objects_with_metadata() for filtering and getting more objects.".format(max_objects)
-            
+            log_message("Simplified scene info collected successfully")
             return response
             
         except Exception as e:
-            log_message("Error getting scene info: {0}".format(str(e)))
+            log_message("Error getting simplified scene info: {0}".format(str(e)))
             return {
                 "status": "error",
                 "message": str(e),
-                "objects": [],
-                "object_count": 0,
-                "total_objects": 0,
-                "layer_count": 0,
-                "layers": [],
-                "document_name": "Unknown",
-                "document_path": "Unknown"
+                "layers": []
             }
     
     def _create_cube(self, params):
@@ -391,6 +392,8 @@ class RhinoMCPServer:
             if not code:
                 return {"status": "error", "message": "No code provided"}
             
+            log_message("Executing code: {0}".format(code))
+            
             # Create a new scope for code execution
             local_dict = {}
             
@@ -398,38 +401,36 @@ class RhinoMCPServer:
                 # Execute the code
                 exec(code, globals(), local_dict)
                 
-                return {
+                # Get result from local_dict or use a default message
+                result = local_dict.get("result", "Code executed successfully")
+                log_message("Code execution completed. Result: {0}".format(result))
+                
+                response = {
                     "status": "success",
-                    "result": str(local_dict.get("result", "Code executed successfully")),
+                    "result": str(result),
                     "variables": {k: str(v) for k, v in local_dict.items() if not k.startswith('__')}
                 }
                 
-            except SyntaxError as e:
-                return {
-                    "status": "error",
-                    "type": "syntax_error",
-                    "message": "Syntax error in code",
-                    "details": str(e),
-                    "line": e.lineno,
-                    "text": e.text
-                }
+                log_message("Sending response: {0}".format(json.dumps(response)))
+                return response
                 
             except Exception as e:
-                return {
+                hint = "Did you use f-string formatting? You have to use IronPython here that doesn't support this."
+                error_response = {
                     "status": "error",
-                    "type": "runtime_error",
-                    "message": "Error during code execution",
-                    "details": str(e),
-                    "traceback": traceback.format_exc()
+                    "message": "{0} {1}".format(hint, str(e)),
                 }
+                log_message("Error: {0}".format(error_response))
+                return error_response
                 
         except Exception as e:
-            return {
+            hint = "Did you use f-string formatting? You have to use IronPython here that doesn't support this."
+            error_response = {
                 "status": "error",
-                "type": "system_error",
-                "message": "Error in code execution system",
-                "details": str(e)
+                "message": "{0} {1}".format(hint, str(e)),
             }
+            log_message("System error: {0}".format(error_response))
+            return error_response
 
     def _add_object_metadata(self, obj_id, name=None, description=None):
         """Add standardized metadata to an object"""

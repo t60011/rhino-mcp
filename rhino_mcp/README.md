@@ -5,9 +5,9 @@ RhinoMCP connects Rhino to Claude AI through the Model Context Protocol (MCP), a
 ## Features
 
 - **Two-way communication**: Connect Claude AI to Rhino through a socket-based server
-- **Object manipulation**: Create and modify 3D objects in Rhino
+- **Object manipulation and management**: Create and modify 3D objects in Rhino including metadata
 - **Layer management**: View and interact with Rhino layers
-- **Scene inspection**: Get detailed information about the current Rhino scene
+- **Scene inspection**: Get detailed information about the current Rhino scene (incl. screencapture) 
 - **Code execution**: Run arbitrary Python code in Rhino from Claude
 
 ## Components
@@ -24,6 +24,7 @@ The system consists of two main components:
 - Rhino 7 or newer
 - Python 3.10 or newer
 - Conda (for environment management)
+- A Replicate API token (for AI-powered features)
 
 ### Setting up the Python Environment
 
@@ -80,11 +81,7 @@ The MCP server will be started automatically by Claude Desktop using the configu
 
 - To stop the Rhino script server:
   - In the Python Editor, type `stop_server()` and press Enter
-  - You should see "RhinoMCP server stopped" in the output
-
-- To restart the Rhino script server:
-  - In the Python Editor, type `start_server()` and press Enter
-  - You should see "RhinoMCP server started on localhost:9876" in the output
+  - You should see "RhinoMCP server stopped" in the outputt
 
 ### Claude Integration
 
@@ -112,23 +109,36 @@ Make sure to:
 
 > **Important Note:** If you're using a conda environment, you must specify the full path to the Python interpreter as shown above. Using the `uvx` command might not work properly with conda environments.
 
+### Setting up Replicate Integration
+
+1. Create a `.env` file in the root directory of the project
+2. Add your Replicate API token:
+   ```
+   REPLICATE_API_TOKEN=your_token_here
+   ```
+3. Make sure to keep this file private and never commit it to version control
+
+### Grasshopper Integration
+
+The package includes Grasshopper integration for advanced parametric modeling capabilities:
+
+1. Locate the `grasshopper_mcp_example.gh` file in the project
+2. Open it in Grasshopper (drag and drop into Rhino's Grasshopper canvas)
+3. The file contains a non-blocking socket server component that listens to the MCP server
+4. The connection will be established automatically when both the MCP server and Grasshopper file are running
+
 ## Usage
-
-### Starting the Connection
-
-1. Open Rhino
-2. Run the Python script editor
-3. Open and run the `rhino_script.py` file to start the Rhino socket server
-4. Open Claude Desktop - it will automatically start the MCP server when needed
 
 ### Using with Claude
 
-Once connected, you can use the following MCP tools from Claude:
+Once connected, Calude or another LLM can use the following MCP tools:
 
-- `get_scene_info()`: Get detailed information about the current Rhino scene
-- `create_cube(size=1.0, location=[0,0,0], name="Cube")`: Create a cube in the Rhino scene
+- `get_scene_info()`: Get simplified scene information focusing on layers and example objects
 - `get_layers()`: Get information about all layers in the Rhino scene
-- `execute_rhino_code(code)`: Run arbitrary Python code in Rhino
+- `execute_code(code)`: Execute arbitrary Python code in Rhino
+- `get_objects_with_metadata(filters, metadata_fields)`: Get detailed information about objects in the scene with their metadata, with optional filtering
+- `capture_viewport(layer, show_annotations, max_size)`: Capture the viewport with optional annotations and layer filtering
+
 
 ### Example Commands
 
@@ -159,9 +169,6 @@ Here are some examples of what you can ask Claude to do:
   - Verify that the Python path in `claude_desktop_config.json` matches your conda environment's Python path
   - Make sure you're using the full path to the Python interpreter
 
-- **Timeout errors**: 
-  - Try simplifying your requests or breaking them into smaller steps
-  - Check if the Rhino script is still running (try `start_server()` again)
 
 ## Limitations
 
@@ -172,8 +179,8 @@ Here are some examples of what you can ask Claude to do:
 
 To add new functionality, you need to:
 
-1. Add new command handlers in the `RhinoMCPServer` class in `rhino_script.py`
-2. Add corresponding MCP tools in `server.py`
+1. Add new command handlers and functions in `rhino_script.py` and the `RhinoMCPServer` class.
+2. Add corresponding MCP tools in `server.py` that include tool and arg descriptions
 
 ## License
 
