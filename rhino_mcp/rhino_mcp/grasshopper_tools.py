@@ -274,6 +274,7 @@ class GrasshopperTools:
         self.app.tool()(self.get_objects)
         self.app.tool()(self.get_selected)
         self.app.tool()(self.update_script)
+        self.app.tool()(self.update_script_with_code_reference)
     
     def is_server_available(self, ctx: Context) -> bool:
         """Grasshopper: Check if the Grasshopper server is available.
@@ -616,3 +617,86 @@ class GrasshopperTools:
                 
         except Exception as e:
             return f"Error updating script: {str(e)}"
+
+    def update_script_with_code_reference(self, ctx: Context, instance_guid: str = None, file_path: str = None, 
+                                        param_definitions: List[Dict[str, Any]] = None, description: str = None, 
+                                        name: str = None, force_code_reference: bool = False) -> str:
+        """Grasshopper: Update a script component to use code from an external Python file.
+        This tool allows you to modify a GHPython script component to use code from an external Python file 
+        instead of embedded code. This enables better code organization, version control, and reuse across 
+        multiple components. Moreove, you can add and remove input/ output paramters.
+        
+        important notes:
+        1. Only use when working in/with curser or another IDE
+        2. First, check the grasshopper script component using  "get_objects" tool
+        3. Second, check if a python file is already referenced by the component AND if it exists in the cursor project
+            ALWAYS add the component instance_guid to the file name (e.g. cirler_creator_a1b2c3d4-e5f6-4a5b-9c8d-7e6f5d4c3b2a.py)
+        4. write code im the file and save it, update the file path with this tool
+        5. Once referenced, future updates on the code file will automatically be reflected in the component (no need to use this tool)
+        6. you can use get_objects tool to get potential error messages from the component for debugging (runtimeMessages)
+
+        Args:
+            instance_guid: The GUID of the target GHPython component to modify.
+            file_path: Path to the external Python file that contains the code.
+            param_definitions: List of dictionaries defining input/output parameters.
+            description: New description for the component.
+            name: New nickname for the component.
+            force_code_reference: When True, converts/sets a component to use referenced code mode.
+
+        Returns:
+            Success status with summary of which elements were updated and component instance_guid
+        
+        Example:
+        ```json
+        {
+            "instance_guid": "a1b2c3d4-e5f6-4a5b-9c8d-7e6f5d4c3b2a",
+            "file_path": "/scripts/cirler_creator_a1b2c3d4-e5f6-4a5b-9c8d-7e6f5d4c3b2a.py"
+            "name":"CircleTool"
+            "description": "Creates a circle and outputs its geometry, center point, and area",
+            "message_to_user": "Circle, add one radius slider as input",
+            force_code_reference = True, 
+            "param_definitions": [
+                {
+                    "type": "input",
+                    "name": "radius",
+                    "access": "item",
+                    "typehint": "float",
+                    "description": "Circle radius",
+                    "optional": false,
+                    "default": 1.0
+                },
+                {
+                    "type": "output",
+                    "name": "circle",
+                    "description": "Generated circle geometry"
+                }
+            ]
+        }
+        ```
+        """
+        try:
+            # Ensure we have a valid instance_guid
+            if not instance_guid:
+                return "Error: No instance_guid provided. Please specify the GUID of the script component to update."
+            
+            connection = get_grasshopper_connection()
+            
+            # Prepare the command payload
+            command_payload = {
+                "instance_guid": instance_guid,
+                "file_path": file_path,
+                "param_definitions": param_definitions,
+                "description": description,
+                "name": name,
+                "force_code_reference": force_code_reference
+            }
+            
+            # Send command and get result
+            result = connection.send_command("update_script_with_code_reference", command_payload)
+            
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            return json.dumps(result.get("result", {}), indent=2)
+                
+        except Exception as e:
+            return f"Error updating script with code reference: {str(e)}"
