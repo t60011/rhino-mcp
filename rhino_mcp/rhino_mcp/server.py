@@ -24,6 +24,7 @@ except ImportError:
 from .replicate_tools import ReplicateTools
 from .rhino_tools import RhinoTools, get_rhino_connection
 from .grasshopper_tools import GrasshopperTools, get_grasshopper_connection
+from .utility_tools import UtilityTools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -88,6 +89,7 @@ app = FastMCP(
 replicate_tools = ReplicateTools(app)
 rhino_tools = RhinoTools(app)
 grasshopper_tools = GrasshopperTools(app)
+utility_tools = UtilityTools(app)
 
 @app.prompt()
 def rhino_creation_strategy() -> str:
@@ -130,20 +132,46 @@ def rhino_creation_strategy() -> str:
 def grasshopper_usage_strategy() -> str:
     """Defines the preferred strategy for working with Grasshopper through MCP"""
     return """When working with Grasshopper through MCP, follow these guidelines:
-    Grasshooper is closely itnergrated with rhino, you can access rhino objects by referencing them, you can 
-    see grasshopper generted geometry in rhino viewport.
 
-    1. Connection Setup:
-       - Always check if the Grasshopper server is available by using is_server_available()
+    2. Document Exploration:
+       - Use get_gh_context() to get an overview of all components and their connections
+       - Use simplified=True for basic info, False for detailed properties (otherwise it get get very very long)
+       - Use get_selected() to examine currently selected components
+       - Use get_objects() with GUIDs to examine specific components
+       - Use context_depth parameter (0-3) to include connected components in the response
 
-    2. Definition Exploration:
-       - Use get_definition_info() to get an overview of components and parameters in the definition
+    3. Script Component Management:
+       - Use update_script() to modify existing script components:
+         - Only use  proper IronPython 2.7 syntax (no f-strigns)
+         - Add descriptions for better documentation
+         - Include user messages to explain changes or suggest next steps
+         - Define or modify component parameters:
+           * When changing parameters, provide ALL desired parameters (even existing ones)
+           * Specify input/output type, name, and optional properties
+           * Consider access type (item/list/tree) for inputs
+           * Be aware that changing parameters may affect existing connections
 
     4. Code Execution Guidelines:
-       - Always use IronPython 2.7 compatible code (no f-strings, no walrus operator, etc.)
-       - you can create grashopper componetns via code 
-       - you can access rhino objects by referencing them
+       - Always use IronPython 2.7 compatible code (no f-strings, walrus operator, etc.)
+       - Include all required imports in your code
+       - Use 'result = value' instead of 'return value' to return data as component output
+       - You can create Grasshopper components via code
+       - You can access Rhino objects by referencing them
 
+    5. Rhino Integration:
+       - Grasshopper is closely integrated with Rhino
+       - Grasshopper-generated geometry appears in Rhino viewport
+
+    6. Best Practices:
+       - remember the Guid / Uuid of components you want to modify / need regular access to
+       - work in small steps, break down the problem into smaller parts
+       - Keep script components well-documented with clear descriptions
+       - Use meaningful names for components and parameters
+       - Test changes incrementally to ensure stability
+       - When modifying scripts:
+         * If not changing parameters, maintain existing input/output structure
+         * If changing parameters, carefully plan the new parameter set
+         * Document parameter changes in the user message
     """
 
 def main():
