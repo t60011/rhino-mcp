@@ -275,6 +275,7 @@ class GrasshopperTools:
         self.app.tool()(self.get_selected)
         self.app.tool()(self.update_script)
         self.app.tool()(self.update_script_with_code_reference)
+        self.app.tool()(self.expire_and_get_info)
     
     def is_server_available(self, ctx: Context) -> bool:
         """Grasshopper: Check if the Grasshopper server is available.
@@ -700,3 +701,33 @@ class GrasshopperTools:
                 
         except Exception as e:
             return f"Error updating script with code reference: {str(e)}"
+
+    def expire_and_get_info(self, ctx: Context, instance_guid: str) -> str:
+        """Grasshopper: Expire a specific component and get its updated information.
+
+        This is useful after updating a component's code, especially via a referenced file,
+        to force a recompute and retrieve the latest state, including potential errors or messages.
+
+        Args:
+            instance_guid: The GUID of the component to expire and query.
+
+        Returns:
+            JSON string with the component's updated information after expiration.
+        """
+        try:
+            if not instance_guid:
+                return "Error: No instance_guid provided. Please specify the GUID of the component to expire."
+
+            logger.info(f"Expiring component and getting info for GUID: {instance_guid}")
+            connection = get_grasshopper_connection()
+            result = connection.send_command("expire_component", {
+                "instance_guid": instance_guid
+            })
+
+            if result.get("status") == "error":
+                return f"Error: {result.get('result', 'Unknown error')}"
+            # The server side already returns component info after expiring
+            return json.dumps(result.get("result", {}), indent=2)
+
+        except Exception as e:
+            return f"Error expiring component: {str(e)}"

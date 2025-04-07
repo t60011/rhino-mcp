@@ -13,10 +13,11 @@ RhinoMCP connects Rhino, Grasshopper and more to Claude AI through the Model Con
  
 #### Grasshopper
 - **Code execution**: Run arbitrary Python code in Grasshopper from Claude - includes the generation of gh components
-- **Gh canvas inspection**: give the LLM an Idea of your grasshopper code - or ask it about your code.
-- **non-blocking two-way communication**: .. via a ghpython script 
-
-note: this is not very stable right now 
+- **Gh canvas inspection**: Get detailed information about your Grasshopper definition, including component graph and parameters
+- **Component management**: Update script components, modify parameters, and manage code references
+- **External code integration**: Link script components to external Python files for better code organization
+- **Real-time feedback**: Get component states, error messages, and runtime information
+- **Non-blocking communication**: Stable two-way communication via HTTP server
 
 ##### Replicate
 - **AI Models**: replicate offers thousands of AI models via API, implemented here: a stable diffusion variant 
@@ -61,11 +62,8 @@ The system consists of two main components:
 1. Open Rhino 7
 2. Open the Python Editor:
    - Click on the "Tools" menu
-   - Select "Python Editor" (or press Ctrl+Alt+P / Cmd+Alt+P)
-3. In the Python Editor:
-   - Click "File" > "Open"
-   - Navigate to and select `rhino_script.py`
-   - Click "Run" (or press F5)
+   - Select "Python Script" -> "Run.."
+   - Navigate to and select `rhino_mcp_client.py`
 4. The script will start automatically and you should see these messages in the Python Editor:
    ```
    RhinoMCP script loaded. Server started automatically.
@@ -81,7 +79,7 @@ The MCP server will be started automatically by Claude Desktop using the configu
 1. First, start the Rhino script:
    - Open Rhino 7
    - Open the Python Editor
-   - Open and run `rhino_script.py`
+   - Open and run `rhino_mcp_client.py`
    - Verify you see the startup messages in the Python Editor
 
 2. Then start Claude Desktop:
@@ -118,7 +116,31 @@ Make sure to:
 - Replace the Python path with the path to Python in your conda environment
 - Save the file and restart Claude Desktop
 
-> **Important Note:** If you're using a conda environment, you must specify the full path to the Python interpreter as shown above. Using the `uvx` command might not work properly with conda environments.
+### Cursor IDE Integration
+
+Using cursor has the potential benifit that you can use it to organise your colelction of python scripts you use for ghpython components (especialyl when you use grasshoppers reference code functionality). Morover, you can utilize its codebase indexing features, add Rhino/Grasshopper SDK references and so on. 
+
+To integrate with Cursor IDE:
+
+1. Locate or create the file `~/.cursor/mcp.json` (in your home directory)
+2. Add the same configuration as used for Claude Desktop:
+
+```json
+{
+    "mcpServers": {
+        "rhino": {
+            "command": "/Users/Joo/miniconda3/envs/rhino_mcp/bin/python",
+            "args": [
+                "-m",
+                "rhino_mcp.server"
+            ]
+        }
+    }
+}
+```
+
+
+> **Important Note:** For both Claude Desktop and Cursor IDE, if you're using a conda environment, you must specify the full path to the Python interpreter as shown above. Using relative paths or commands like `python` or `uvx` might not work properly with conda environments.
 
 ### Setting up Replicate Integration
 
@@ -131,24 +153,16 @@ Make sure to:
 
 ### Grasshopper Integration
 
-The package includes Grasshopper integration for advanced parametric modeling capabilities:
+The package includes enhanced Grasshopper integration:
 
-1. Locate the `grasshopper_mcp_example.gh` file in the project
-2. Open it in Grasshopper (drag and drop into Rhino's Grasshopper canvas)
-3. The file contains a non-blocking socket server component that listens to the MCP server
-4. The connection will be established automatically when both the MCP server and Grasshopper file are running
+1. Start the Grasshopper server component (in rhino_mcp/grasshopper_mcp_client.gh)
 
-## Usage
 
-### Using with Claude
 
-Once connected, Calude or another LLM can use the following MCP tools:
-
-- `get_scene_info()`: Get simplified scene information focusing on layers and example objects
-- `get_layers()`: Get information about all layers in the Rhino scene
-- `execute_code(code)`: Execute arbitrary Python code in Rhino
-- `get_objects_with_metadata(filters, metadata_fields)`: Get detailed information about objects in the scene with their metadata, with optional filtering
-- `capture_viewport(layer, show_annotations, max_size)`: Capture the viewport with optional annotations and layer filtering
+Key features:
+- Non-blocking communication via HTTP
+- Support for external Python file references
+- error handling and feedback
 
 
 ### Example Commands
@@ -159,6 +173,9 @@ Here are some examples of what you can ask Claude to do:
 - "Create a cube at the origin"
 - "Get all layers in the Rhino document"
 - "Execute this Python code in Rhino: ..."
+- "Update a Grasshopper script component with new code"
+- "Link a Grasshopper component to an external Python file"
+- "Get the current state of selected Grasshopper components"
 
 ## Troubleshooting
 
@@ -180,10 +197,11 @@ Here are some examples of what you can ask Claude to do:
   - Verify that the Python path in `claude_desktop_config.json` matches your conda environment's Python path
   - Make sure you're using the full path to the Python interpreter
 
-
 ## Limitations
 
-- The `execute_rhino_code` tool allows running arbitrary Python code in Rhino, which can be powerful but potentially dangerous. Use with caution.
+- The `execute_rhino_code` and `execute_code_in_gh` tools allow running arbitrary Python code, which can be powerful but potentially dangerous. Use with caution.
+- Grasshopper integration requires the HTTP server component to be running
+- External code references in Grasshopper require careful file path management
 - This is a minimal implementation focused on basic functionality. Advanced features may require additional development.
 
 ## Extending

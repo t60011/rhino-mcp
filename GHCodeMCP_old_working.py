@@ -8,7 +8,7 @@ from System.Drawing import RectangleF
 import Grasshopper
 import Grasshopper as gh
 import Rhino.Geometry as rg
-
+import System
 from System import Guid
 from Grasshopper.Kernel import GH_ParamAccess
 from Grasshopper.Kernel.Parameters import Param_GenericObject
@@ -162,8 +162,13 @@ def get_component_info(comp, simplified=False, is_selected=False):
             "sources": [],
             "targets": [],
             "isSelected": is_selected
+            
         }
         
+        try:
+            info["runTimeMessage"]= str(component.RuntimeMessages(component.RuntimeMessageLevel)).replace("List[str]","")
+        except:
+            pass
         # Get input and output parameter info
         if hasattr(comp, "Params"):
             if hasattr(comp.Params, "Input"):
@@ -193,6 +198,10 @@ def get_component_info(comp, simplified=False, is_selected=False):
         "isSelected": is_selected
     }
     
+    try:
+        comp_info["runTimeMessage"]= str(component.RuntimeMessages(component.RuntimeMessageLevel)).replace("List[str]","")
+    except:
+        pass
     # Add additional info for non-standard components
     if kind != "component":
         comp_info.update({
@@ -298,128 +307,190 @@ def sort_graph_by_execution_order(graph):
 def get_objects(instance_guids, context_depth=0, simplified=False):
     """
     Get Grasshopper objects by their instance GUIDs with optional context.
-    
-    Args:
-        instance_guids: Single GUID or list of instance GUIDs to retrieve
-        context_depth: How many levels up/downstream to include (0-3)
-        simplified: Whether to return simplified object info
-    
-    Returns:
-        Dictionary of found objects, keyed by their instance GUID
+    Focuses on retrieving components and standalone parameters.
+    Returns a dictionary keyed by instance GUID, sorted by execution order.
+    (Simplified revision to address complexity issues)
     """
-    # Get the current Grasshopper document
     doc = ghenv.Component.OnPingDocument()
     if not doc:
+        sc.sticky["processing_error"] = "get_objects: No active Grasshopper document."
         return {}
-    
-    # Handle single GUID case
+
     if not isinstance(instance_guids, list):
-        instance_guids = [instance_guids]
-    
-    # Convert string GUIDs to System.Guid if needed
-    instance_guid_map = {}
-    for guid in instance_guids:
-        if isinstance(guid, str):
-            try:
-                import System
-                instance_guid_map[System.Guid(guid)] = guid
-            except:
-                instance_guid_map[guid] = guid
-        else:
-            instance_guid_map[guid] = guid
-    
-    # Find objects with the given instance GUIDs
-    result = {}
-    selected_guids = set()
-    
+        instance_guids = [str(instance_guids)]
+    else:
+        instance_guids = [str(g) for g in instance_guids]
+
+    initial_target_guids = set(instance_guids)
+    result_graph = {} # Stores info for components and standalone params
+    guids_added_to_result = set() # Track what's already in the result
+
+    # --- Build a map of all potential objects and their basic types/parents ---
+    object_map = {} # {guid_str: {'obj': obj, 'is_comp': bool, 'is_param': bool, 'parent_guid': str|None}}
     for obj in doc.Objects:
-        if obj.InstanceGuid in instance_guid_map:
-            guid_str = str(instance_guid_map[obj.InstanceGuid])
-            selected_guids.add(guid_str)
-            
-            if isinstance(obj, Grasshopper.Kernel.IGH_Component):
-                result[guid_str] = get_component_info(obj, simplified=simplified, is_selected=True)
-            elif isinstance(obj, Grasshopper.Kernel.IGH_Param):
-                result[guid_str] = get_standalone_param_info(obj, simplified=simplified, is_selected=True)
-            else:
-                result[guid_str] = {"instanceGuid": guid_str, "isSelected": True}
-    
-    # If context depth is requested, traverse the graph to find related objects
-    if context_depth > 0 and result and context_depth <= 3:  # Limit to max depth of 3
-        # First build a complete graph to work with
-        graph = {}
-        for obj in doc.Objects:
-            guid_str = str(obj.InstanceGuid)
-            
-            if isinstance(obj, Grasshopper.Kernel.IGH_Component):
-                graph[guid_str] = {"sources": [], "targets": []}
-                # Add sources from input params
-                if hasattr(obj, "Params") and hasattr(obj.Params, "Input"):
-                    for param in obj.Params.Input:
-                        for src in param.Sources:
-                            graph[guid_str]["sources"].append(str(src.InstanceGuid))
-                
-                # Add targets from output params
-                if hasattr(obj, "Params") and hasattr(obj.Params, "Output"):
-                    for param in obj.Params.Output:
-                        for tgt in param.Recipients:
-                            graph[guid_str]["targets"].append(str(tgt.InstanceGuid))
-            
-            elif isinstance(obj, Grasshopper.Kernel.IGH_Param):
-                graph[guid_str] = {"sources": [], "targets": []}
-                # Add sources
-                if hasattr(obj, "Sources"):
-                    for src in obj.Sources:
-                        graph[guid_str]["sources"].append(str(src.InstanceGuid))
-                
-                # Add targets
-                if hasattr(obj, "Recipients"):
-                    for tgt in obj.Recipients:
-                        graph[guid_str]["targets"].append(str(tgt.InstanceGuid))
-        
-        # Traverse both upstream and downstream
-        context_guids = set()
-        current_level = set(selected_guids)
-        
-        for depth in range(context_depth):
+        if not hasattr(obj, "InstanceGuid"): continue
+        guid_str = str(obj.InstanceGuid)
+        parent_guid = None
+        parent_comp = obj.Attributes.Parent if hasattr(obj, "Attributes") and obj.Attributes else None
+        if parent_comp and hasattr(parent_comp, "InstanceGuid"):
+            parent_guid = str(parent_comp.InstanceGuid)
+
+        object_map[guid_str] = {
+            'obj': obj,
+            'is_comp': isinstance(obj, Grasshopper.Kernel.IGH_Component),
+            'is_param': isinstance(obj, Grasshopper.Kernel.IGH_Param),
+            'parent_guid': parent_guid
+        }
+
+    # --- Pass 1: Process initially requested GUIDs ---
+    guids_to_process_for_context = set()
+    for target_guid_str in initial_target_guids:
+        if target_guid_str in object_map:
+            item = object_map[target_guid_str]
+            obj_to_add = None
+            obj_guid_to_add = None
+            is_selected_flag = True # This object was directly requested
+
+            if item['is_comp']:
+                # Selected object is a component
+                obj_to_add = item['obj']
+                obj_guid_to_add = target_guid_str
+            elif item['is_param']:
+                if item['parent_guid']:
+                    # Selected object is a component parameter - add the parent component instead
+                    parent_guid_str = item['parent_guid']
+                    if parent_guid_str in object_map:
+                        obj_to_add = object_map[parent_guid_str]['obj']
+                        obj_guid_to_add = parent_guid_str
+                        # Mark the parent as selected since its child was selected?
+                        # Let's keep the component info function handling isSelected for the component itself.
+                        # We just need to ensure the parent component is included.
+                    else:
+                        # Parent component not found? Log error maybe.
+                        sc.sticky["processing_error"] = sc.sticky.get("processing_error", "") + \
+                            "\nWarning: Parent component {} not found for selected param {}.".format(item['parent_guid'], target_guid_str)
+                else:
+                    # Selected object is a standalone parameter
+                    obj_to_add = item['obj']
+                    obj_guid_to_add = target_guid_str
+            # else: Handle other selected types if needed? For now, focus on comp/param.
+
+            # If we identified a component or standalone param to add, get its info
+            if obj_to_add and obj_guid_to_add and obj_guid_to_add not in guids_added_to_result:
+                info = None
+                if isinstance(obj_to_add, Grasshopper.Kernel.IGH_Component):
+                    info = get_component_info(obj_to_add, simplified=simplified, is_selected=(obj_guid_to_add in initial_target_guids))
+                elif isinstance(obj_to_add, Grasshopper.Kernel.IGH_Param): # Standalone only branch
+                    info = get_standalone_param_info(obj_to_add, simplified=simplified, is_selected=(obj_guid_to_add in initial_target_guids))
+
+                if info:
+                    result_graph[obj_guid_to_add] = info
+                    guids_added_to_result.add(obj_guid_to_add)
+                    guids_to_process_for_context.add(obj_guid_to_add) # Use this GUID for context traversal
+
+
+    # --- Pass 2: Traverse Context ---
+    if context_depth > 0 and guids_to_process_for_context:
+        # Build simplified link graph *only* for components and standalone params needed for traversal
+        link_graph = {} # {guid: {"sources": [...], "targets": [...]}}
+        for guid_str, item in object_map.items():
+            node_sources = []
+            node_targets = []
+            current_obj = item['obj']
+
+            if item['is_comp']:
+                # Component: sources from inputs, targets from outputs
+                if hasattr(current_obj.Params, "Input"):
+                    for p in current_obj.Params.Input:
+                        if hasattr(p, "Sources"):
+                            node_sources.extend([str(src.InstanceGuid) for src in p.Sources if src and hasattr(src,"InstanceGuid")])
+                if hasattr(current_obj.Params, "Output"):
+                    for p in current_obj.Params.Output:
+                        if hasattr(p, "Recipients"):
+                             # Target is the recipient param itself, or its parent component if it has one
+                             for recipient in p.Recipients:
+                                  if recipient and hasattr(recipient, "InstanceGuid"):
+                                      rec_guid = str(recipient.InstanceGuid)
+                                      rec_parent = recipient.Attributes.Parent if hasattr(recipient, "Attributes") and recipient.Attributes else None
+                                      if rec_parent and hasattr(rec_parent,"InstanceGuid"):
+                                          node_targets.append(str(rec_parent.InstanceGuid)) # Target the component
+                                      else:
+                                           node_targets.append(rec_guid) # Target the standalone param
+
+            elif item['is_param'] and not item['parent_guid']: # Standalone parameter
+                # Standalone Param: sources from its sources, targets are its recipients
+                if hasattr(current_obj, "Sources"):
+                    node_sources.extend([str(src.InstanceGuid) for src in current_obj.Sources if src and hasattr(src,"InstanceGuid")])
+                if hasattr(current_obj, "Recipients"):
+                    # Target is the recipient param itself, or its parent component if it has one
+                    for recipient in current_obj.Recipients:
+                        if recipient and hasattr(recipient, "InstanceGuid"):
+                            rec_guid = str(recipient.InstanceGuid)
+                            rec_parent = recipient.Attributes.Parent if hasattr(recipient, "Attributes") and recipient.Attributes else None
+                            if rec_parent and hasattr(rec_parent,"InstanceGuid"):
+                                node_targets.append(str(rec_parent.InstanceGuid)) # Target the component
+                            else:
+                                node_targets.append(rec_guid) # Target the standalone param
+
+            if node_sources or node_targets:
+                 # Only add nodes that actually have connections relevant to components/standalone params
+                 link_graph[guid_str] = {"sources": list(set(node_sources)), "targets": list(set(node_targets))}
+
+        # --- Perform Traversal ---
+        context_guids_to_add = set()
+        visited_for_context = set(guids_to_process_for_context) # Start with the identified core items
+        current_level = set(guids_to_process_for_context)
+        max_depth = min(int(context_depth), 3)
+
+        for _ in range(max_depth):
             next_level = set()
-            
             for guid in current_level:
-                if guid in graph:
+                if guid in link_graph:
+                    node_links = link_graph[guid]
                     # Add upstream (sources)
-                    for src in graph[guid]["sources"]:
-                        if src not in selected_guids and src not in context_guids:
-                            next_level.add(src)
-                            context_guids.add(src)
-                    
+                    for src in node_links.get("sources", []):
+                        if src in object_map and src not in visited_for_context: # Check if src is a valid obj in our map
+                             # Only add components or standalone params as context
+                             if object_map[src]['is_comp'] or (object_map[src]['is_param'] and not object_map[src]['parent_guid']):
+                                  next_level.add(src)
+                                  visited_for_context.add(src)
+                                  context_guids_to_add.add(src)
                     # Add downstream (targets)
-                    for tgt in graph[guid]["targets"]:
-                        if tgt not in selected_guids and tgt not in context_guids:
-                            next_level.add(tgt)
-                            context_guids.add(tgt)
-            
+                    for tgt in node_links.get("targets", []):
+                        if tgt in object_map and tgt not in visited_for_context: # Check if tgt is valid
+                            if object_map[tgt]['is_comp'] or (object_map[tgt]['is_param'] and not object_map[tgt]['parent_guid']):
+                                next_level.add(tgt)
+                                visited_for_context.add(tgt)
+                                context_guids_to_add.add(tgt)
+
+            if not next_level: break
             current_level = next_level
-            if not current_level:
-                break  # No more objects to add
-        
-        # Add context objects to result
-        for guid in context_guids:
-            obj = get_object_by_instance_guid(doc, guid)
-            if obj:
-                if isinstance(obj, Grasshopper.Kernel.IGH_Component):
-                    result[guid] = get_component_info(obj, simplified=simplified, is_selected=False)
-                elif isinstance(obj, Grasshopper.Kernel.IGH_Param):
-                    result[guid] = get_standalone_param_info(obj, simplified=simplified, is_selected=False)
-    
-    # Always sort the dictionary by execution order for consistency
-    if result:
-        result = sort_graph_by_execution_order(result)
-    
-    # For single object requests, if we found it, return just that object's info
-    if len(instance_guids) == 1 and len(result) == 1 and context_depth == 0:
-        return result.values()[0]
-    
-    return result
+
+        # --- Pass 3: Get info for context objects ---
+        for context_guid_str in context_guids_to_add:
+            if context_guid_str not in guids_added_to_result: # Avoid reprocessing
+                if context_guid_str in object_map:
+                    item = object_map[context_guid_str]
+                    info = None
+                    is_selected_flag = False # Context objects are not selected
+
+                    if item['is_comp']:
+                        info = get_component_info(item['obj'], simplified=simplified, is_selected=is_selected_flag)
+                    elif item['is_param'] and not item['parent_guid']: # Standalone only
+                        info = get_standalone_param_info(item['obj'], simplified=simplified, is_selected=is_selected_flag)
+
+                    if info:
+                        result_graph[context_guid_str] = info
+                        guids_added_to_result.add(context_guid_str)
+
+
+    # --- Final Step: Sort the resulting graph ---
+    # No need to filter child params here, as we only added components and standalone params
+    if result_graph:
+        return sort_graph_by_execution_order(result_graph)
+    else:
+        return {}
+
 
 def get_object_by_instance_guid(doc, instance_guid):
     """
@@ -779,7 +850,7 @@ def update_script_with_code_reference(instance_guid, file_path=None, param_defin
             }
         }
     except Exception as e:
-        result = {"status": "error", "result": str(e) }
+        result = {"status": "error", "result": str(e) + " remember in case of erros/bugs in code you need to fix it in the reference python file "}
     finally:
         # Always unfreeze the UI
         doc.DestroyAttributeCache()
