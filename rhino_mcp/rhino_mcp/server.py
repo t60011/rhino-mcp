@@ -79,11 +79,20 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
                 logger.warning("Error disconnecting from Grasshopper: {0}".format(str(e)))
 
 # Create the MCP server with lifespan support
-app = FastMCP(
-    "RhinoMCP",
-    description="Rhino integration through the Model Context Protocol",
-    lifespan=server_lifespan
-)
+#if fastmcp support description
+try:
+    app = FastMCP(
+        "RhinoMCP",
+        description="Rhino integration through the Model Context Protocol",
+        lifespan=server_lifespan
+    )
+#if fastmcp don't support description
+except TypeError as e:
+    app = FastMCP(
+        "RhinoMCP",
+        #description="Rhino integration through the Model Context Protocol",
+        lifespan=server_lifespan
+    )
 
 # Initialize tool collections
 replicate_tools = ReplicateTools(app)
