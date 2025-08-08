@@ -3,13 +3,6 @@ set -e
 
 echo "=== rhino-mcp Install/Update Script ==="
 
-# Parse arguments
-DEV_MODE=false
-if [[ "$1" == "--dev" ]]; then
-    DEV_MODE=true
-    echo "[MODE] Development mode (install/update only, do not start MCP Server)"
-fi
-
 # 1. Check if uv is installed
 if ! command -v uv &> /dev/null
 then
@@ -42,10 +35,5 @@ source .venv/bin/activate
 echo "[STEP] Installing/Updating rhinomcp..."
 uv pip install -e .
 
-# 6. Start MCP Server unless in dev mode
-if [ "$DEV_MODE" = false ]; then
-    echo "[STEP] Starting rhinomcp MCP Server..."
-    rhinomcp
-else
-    echo "[DONE] Installation/Update complete (development mode, server not started)"
-fi
+echo "[DONE] Installation/Update complete."
+echo "[INFO] To start MCP server, run rhino_mcp_client.py inside Rhino."
