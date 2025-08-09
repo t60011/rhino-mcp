@@ -29,6 +29,39 @@ The system consists of two main components:
 1. **Rhino-side Script (`rhino_script.py`)**: A Python script that runs inside Rhino to create a socket server that receives and executes commands
 2. **MCP Server (`rhino_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Rhino script
 
+## 🚀 Quick Install (Recommended)
+
+> This method uses `install.sh` and `requirements.txt` for a fast setup, without manually creating a conda environment.  
+> 此方法透過 `install.sh` 與 `requirements.txt` 一鍵完成安裝，不需手動建立 conda 環境。
+
+### Prerequisites
+- macOS with **Homebrew**
+- **Rhino 8** (for running `rhino_mcp_client.py` inside Rhino)  
+- `uv` (will be installed automatically if missing)
+
+### Install / Update
+```bash
+# From any directory
+curl -fsSL https://raw.githubusercontent.com/t60011/rhino-mcp/main/install.sh -o install.sh \  && chmod +x install.sh \  && ./install.sh
+```
+The script will:
+- Clone or update `t60011/rhino-mcp`
+- Create a venv under `rhino-mcp/rhino_mcp/.venv`
+- Install the package in editable mode (`-e .`)
+- Install dependencies from `requirements.txt`
+
+> **Note:** The script does **not** start the MCP server.  
+> 啟動請在 Rhino 內執行 `rhino_mcp_client.py`。
+
+---
+
+### Start the MCP server in Rhino
+1. Open **Rhino 8**
+2. Run `rhino_mcp_client.py` (via Tools → Python Script → Run…)
+3. Confirm connection in Claude Desktop or LM Studio
+
+---
+
 ## Installation
 
 ### Prerequisites
